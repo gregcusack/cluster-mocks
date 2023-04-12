@@ -17,6 +17,9 @@ use {
     },
 };
 
+//while time limit is not exceeded, randomly choose a node and run gossip
+//this is called from a thread builder. so by default this loop is run simultaneously by 10 threads
+//nodes are RWLocked, so if we randomly select a node that is already being gossiped, then it will choose a new one
 fn run_gossip(
     config: &Config,
     nodes: &[RwLock<Node>],
@@ -169,15 +172,22 @@ fn main() {
         .unzip();
     let router = Router::new(config.packet_drop_rate, senders).unwrap();
     // TODO: remove unstaked here?!
+    //get all of the stakes here. map node pubkey => stake
+    //this includes unstaked nodes! so i guess Behzad's todo wants to remove unstaked
     let stakes: HashMap<Pubkey, /*stake:*/ u64> = nodes
         .iter()
         .map(|node| (node.pubkey(), node.stake()))
         .collect();
+    //collect vector of nodes
     let nodes: Vec<_> = nodes.into_iter().map(RwLock::new).collect();
+    //build a thread pool based on number of threads
     let thread_pool = ThreadPoolBuilder::new()
         .num_threads(config.num_threads)
         .build()
         .unwrap();
+
+    //with thread pool, we're going to run gossip
+    //passing in initial config, vector of nodes, node stakes {pubkey => stake}, router (sender side)
     thread_pool
         .broadcast(|_ctx| run_gossip(&config, &nodes, &stakes, &router))
         .into_iter()
@@ -190,6 +200,10 @@ fn main() {
         .collect::<Result<_, _>>()
         .unwrap();
     // Consume packets buffered at each node's receiver channel.
+    // i don't understand this. So, nodes gossip and send all the gossip messages but don't actually
+    // read in any information until now?
+    //
+    info!("consuming packets!");
     thread_pool.install(|| {
         nodes.par_iter_mut().for_each(|node| {
             node.consume_packets(&stakes);

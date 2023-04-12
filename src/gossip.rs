@@ -124,6 +124,8 @@ impl Node {
         let elapsed = self.clock.elapsed();
         self.clock = Instant::now();
         self.num_gossip_rounds += 1;
+        //greg add
+        // info!("number of gossip rounds: {}", self.num_gossip_rounds);
         if self.num_gossip_rounds % config.rotate_active_set_rounds == 1 {
             self.rotate_active_set(rng, config.gossip_push_fanout as usize, stakes);
         }
@@ -136,6 +138,7 @@ impl Node {
             num_outdated,
             num_duplicates,
         } = self.consume_packets(stakes);
+        info!("pubkey: {}, t_id: {:?}, num_packets: {}", &format!("{}", self.pubkey())[..8], std::thread::current().id(), num_packets);
         // Send prune messages for upserted origins.
         {
             let origins = keys.iter().map(|key| key.origin);
@@ -258,6 +261,9 @@ impl Node {
     }
 
     /// Drains the channel for incoming packets and updates crds table.
+    /// for each packet in the channel, we are going to check if it is a Push packet or a prune packet
+    /// Update our CRDS table if it is a push
+    /// Prune the node of the originating message if it is a prune message
     pub fn consume_packets(&mut self, stakes: &HashMap<Pubkey, u64>) -> ConsumeOutput {
         let packets: Vec<_> = self.receiver.try_iter().collect();
         // Insert new messages into the CRDS table.
@@ -301,25 +307,33 @@ impl Node {
         out
     }
 
+    //upserting into CRDS. idk what ordinal is.
     fn upsert(&mut self, key: CrdsKey, ordinal: u64) -> Result<(), UpsertError> {
-        match self.table.entry(key) {
+        //each node has a table -> {CrdsKey => CrdsEntry}
+        match self.table.entry(key) { //get entry for the specific key
+            // if crds key exists in our node's table, extract the CrdsEntry for the "key" aka CrdsKey
             Entry::Occupied(mut entry) => {
-                let entry = entry.get_mut();
-                match entry.ordinal.cmp(&ordinal) {
+                let entry = entry.get_mut(); //get mutable reference to our CrdsEntry
+                // Compare the current ordinal we (the node) has in its CrdsTable (entry.ordinal) with 
+                // the incoming CrdsEntry.ordinal value (&ordinal)
+                // when we push messages, we must increase the ordinal or something. 
+                match entry.ordinal.cmp(&ordinal) { 
                     Ordering::Less => {
-                        *entry = CrdsEntry {
+                        *entry = CrdsEntry { //current entry in node's table is less than the incoming message, update with incoming ordinal
                             ordinal,
                             num_dups: 0u8,
                         };
                         Ok(())
                     }
-                    Ordering::Equal => {
+                    Ordering::Equal => { //received entry matches what we have in table
                         entry.num_dups = entry.num_dups.saturating_add(1u8);
                         Err(UpsertError::Duplicate(entry.num_dups))
                     }
-                    Ordering::Greater => Err(UpsertError::Outdated),
+                    //incoming message entry is less than current entry in node's table. so incoming message is outdated. do not update
+                    Ordering::Greater => Err(UpsertError::Outdated), 
                 }
             }
+            //no entry in our Node's Crds table. so let's add it
             Entry::Vacant(entry) => {
                 entry.insert(CrdsEntry {
                     ordinal,
@@ -368,11 +382,13 @@ pub fn make_gossip_cluster(
         keep_unstaked_delinquents: Some(true),
         delinquent_slot_distance: None,
     };
+    //Pull vote accounts from mainnet (this is default. can set via command line args)
     let vote_accounts: RpcVoteAccountStatus = rpc_client.get_vote_accounts_with_config(config)?;
     info!(
         "num of vote accounts: {}",
         vote_accounts.current.len() + vote_accounts.delinquent.len()
     );
+    //get map of node stakes (Node Pubkey => stake)
     let stakes: HashMap</*node pubkey:*/ String, /*activated stake:*/ u64> = vote_accounts
         .current
         .iter()
@@ -429,10 +445,13 @@ where
     T: Borrow<Node>,
 {
     let mut out = HashMap::<CrdsKey, /*ordinal:*/ u64>::new();
-    for node in nodes {
-        for (key, entry) in node.borrow().table() {
+    //for each gossip node
+    for node in nodes { 
+        //loop through the Node's Crds table aka Loop through CrdsKey, CrdsEntry (Where CrdsEntry is: ordinal, num_dups))
+        for (key, entry) in node.borrow().table() { 
+            info!("key, entry ordinal: {}, {}", key.origin, entry.ordinal);
             let ordinal = out.entry(*key).or_default();
-            *ordinal = u64::max(*ordinal, entry.ordinal);
+            *ordinal = u64::max(*ordinal, entry.ordinal);  //for each key in node's crds table, keep the one with the largest ordinal. add to "out"
         }
     }
     out
