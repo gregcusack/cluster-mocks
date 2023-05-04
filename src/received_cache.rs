@@ -38,7 +38,7 @@ impl ReceivedCache {
         &mut self,
         pubkey: &Pubkey, // This node.
         origin: Pubkey,  // CRDS value owner.
-        stake_threshold: f64,
+        stake_threshold: f64, //this is the crds_gossip_prune_stake_threshold = 0.15 currently
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> {
@@ -94,7 +94,7 @@ impl ReceivedCacheEntry {
         self,
         pubkey: &Pubkey, // This node.
         origin: &Pubkey, // CRDS value owner.
-        stake_threshold: f64,
+        stake_threshold: f64, //this is the crds_gossip_prune_stake_threshold = 0.15 currently
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> {

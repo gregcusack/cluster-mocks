@@ -162,7 +162,7 @@ fn main() {
     };
     info!("config: {:#?}", config);
     assert!(config.num_threads > 0);
-    let nodes = make_gossip_cluster(&rpc_client).unwrap();
+    let nodes: Vec<(Node, crossbeam_channel::Sender<Arc<Packet>>)> = make_gossip_cluster(&rpc_client).unwrap();
     let (nodes, senders): (Vec<_>, Vec<_>) = nodes
         .into_iter()
         .map(|(node, sender)| {
@@ -228,8 +228,8 @@ fn main() {
             "{} | {:.2}% | {:6} | {:7} | {:2}%",
             &format!("{}", node.pubkey())[..8],
             node.stake() as f64 * 100.0 / active_stake as f64,
-            node.num_gossip_rounds(),
-            node_table.len(),
+            node.num_gossip_rounds(), //number of times a thread ran run_gossip()
+            node_table.len(), //number of Crds entries
             num_hits * 100 / table.len(),
         );
     }

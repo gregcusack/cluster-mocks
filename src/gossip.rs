@@ -29,6 +29,8 @@ pub struct Node {
     pubkey: Pubkey,
     stake: u64,
     table: HashMap<CrdsKey, CrdsEntry>,
+    // active set: PushActiveSet {} Keys are gossip nodes to push messages to.
+    // Values are which origins the node has pruned.
     active_set: PushActiveSet,
     received_cache: ReceivedCache,
     receiver: Receiver<Arc<Packet>>,
@@ -138,7 +140,7 @@ impl Node {
             num_outdated,
             num_duplicates,
         } = self.consume_packets(stakes);
-        info!("pubkey: {}, t_id: {:?}, num_packets: {}", &format!("{}", self.pubkey())[..8], std::thread::current().id(), num_packets);
+        // info!("pubkey: {}, t_id: {:?}, num_packets: {}", &format!("{}", self.pubkey())[..8], std::thread::current().id(), num_packets);
         // Send prune messages for upserted origins.
         {
             let origins = keys.iter().map(|key| key.origin);
@@ -171,6 +173,15 @@ impl Node {
             };
             let gossip_push_fanout =
                 gossip_push_fanout as usize + rng.gen_bool(gossip_push_fanout % 1.0) as usize;
+
+            // let mut count = 0u64;
+            // for node in self.
+            //     active_set
+            //     .get_nodes(&self.pubkey, &key.origin, |_| false, stakes) {
+            //         count += 1;
+            // }
+            // info!("total nodes in PushActiveSetEntry: {}", count);
+
             for node in self
                 .active_set
                 .get_nodes(&self.pubkey, &key.origin, |_| false, stakes)
@@ -188,7 +199,7 @@ impl Node {
             }
         };
         if rng.gen_ratio(1, 1000) {
-            trace!(
+            info!(
                 "{}, {:?}: {}ms, round: {}, packets: {}, prunes: {},\
                 outdated: {}, {:.0}%, duplicates: {}, {:.0}%, keys: {}, {}ms",
                 &format!("{}", self.pubkey)[..8],
@@ -240,7 +251,8 @@ impl Node {
         Ok(())
     }
 
-    // Refreshes own gossip entries, returning upserted crds keys.
+    // Refreshes own gossip entries, returning upserted crds keys.\
+    // this is not in main solana code. i believe it's because we are artifially refressing entries for gossip purpose
     fn refresh_entries<'a, R: Rng>(
         &'a mut self,
         rng: &'a mut R,
@@ -266,6 +278,7 @@ impl Node {
     /// Prune the node of the originating message if it is a prune message
     pub fn consume_packets(&mut self, stakes: &HashMap<Pubkey, u64>) -> ConsumeOutput {
         let packets: Vec<_> = self.receiver.try_iter().collect();
+        // info!("# of new packets to consume: {}", packets.len());
         // Insert new messages into the CRDS table.
         let mut out = ConsumeOutput {
             num_packets: packets.len(),
@@ -361,8 +374,10 @@ impl Node {
             .into_iter()
             .collect();
         let cluster_size = nodes.len();
+        // not the goassip_push_fanout * 3 is equivalent to CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE in solana
+        // note, here the default is 6*3=18. but in solana it is 6*2=12
         self.active_set
-            .rotate(rng, gossip_push_fanout * 3, cluster_size, &nodes, stakes);
+            .rotate(rng, gossip_push_fanout * 3, cluster_size, &nodes, stakes, self.pubkey());
     }
 }
 
@@ -449,10 +464,13 @@ where
     for node in nodes { 
         //loop through the Node's Crds table aka Loop through CrdsKey, CrdsEntry (Where CrdsEntry is: ordinal, num_dups))
         for (key, entry) in node.borrow().table() { 
-            info!("key, entry ordinal: {}, {}", key.origin, entry.ordinal);
+            // info!("node id, key, entry ordinal: {}, {}, {}", node.borrow().pubkey(), key.origin, entry.ordinal);
             let ordinal = out.entry(*key).or_default();
             *ordinal = u64::max(*ordinal, entry.ordinal);  //for each key in node's crds table, keep the one with the largest ordinal. add to "out"
         }
     }
+    // for (key, ordinal) in out.borrow() {
+    //     info!("key, index, ordinal: {}, {}, {}", key.origin, key.index, ordinal);
+    // }
     out
 }
